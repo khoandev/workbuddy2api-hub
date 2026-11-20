@@ -1,3 +1,22 @@
+## v2.2.0
+
+- **OpenAI 兼容语音接口**：新增 `POST /v1/audio/speech` 与 `POST /v1/audio/transcriptions`。TTS 支持 WAV / PCM（上游不提供 MP3，请求 MP3 会明确返回 400），ASR 支持 multipart `file` / `audio` 字段与 3 MB 上限；`15052` 返回 413，`15053` 返回 400。
+- **音频能力开关**：媒体页新增「语音合成 TTS」「语音转写 ASR」，两者默认关闭；开启后使用文本号池账号，遵守 API Key 白名单、指定账号和号池边界。
+- **音频记账**：TTS / ASR 成功与失败行分别记录 `kind=tts/asr`、`cost_policy=audio`，运行日志也按对应 tag 归类。
+- **流内错误按失败终态处理**：Chat 流在已输出正文后收到上游 error 时，只发送错误帧，不再补正常 finish / usage / `[DONE]`；Responses 发送 `response.failed`；Anthropic Messages 发送原生 error 事件并记录失败。
+- **设备 token 请求头安全处理**：含 Unicode、换行或非法字符的设备 token 会被忽略，避免 `UnicodeEncodeError` 或请求头注入导致整个账号不可用。
+- **运营任务补全**：补齐星巴克协作、记者节福利、真实技能分享渠道、模板四事件组；技能分享必须拿到 `channel_id`、`share_code` 与链接，进度确认后才领奖。任务页将「本期 Buddy 加油站活动」改名为「Buddy 加油站签到」。
+- **文档精简**：README 的版本更新段只保留 `docs/CHANGELOG.md` 入口。
+- 全量测试：**312 个套件：234 个 Python + 78 个 JS，`312 passed, 0 failed, 0 skipped`**。
+
+## v2.1.7
+
+- 用量页先独立显示今日统计，累计与历史在后台补齐。最近请求支持按版本查询，空闲时返回简短状态，实时列表保留未变化的行，翻到历史页时维持当前位置。
+- 封存段会生成可重用的压缩汇总。即使全局断点缺失，也能合并有效的归档摘要，单段摘要损坏或依赖变更时只重算受影响的段。
+
+- **大用量看板**：后台批量读新增记录，复用现有断点，同时更新看板聚合和时间序列。面板展示计算进度和更新时间，按版本拉取变化的数据；性能分位约每 30 秒刷新。自定义历史区间可以手动刷新，日期边界按原始流水精确核算。
+- **用量日志轮转**：活动日志默认达到 8 MiB 后封存到 `usage.jsonl.segments/`，普通归档后台压缩并建立时间索引，旧流水保留。备份时复制整个用量目录。可设置 `WB_USAGE_ROTATE_BYTES=0` 停止新轮转。降级到只支持单文件的旧版前，可用 `python -m wb_usage_io export` 导出完整流水。
+
 ## v2.1.5
 
 - **更新源迁移**：`wb_updates.py` 的默认仓库从 `ardeyouxipianyi/workbuddy2api-hub` 切换到 `niyouqianma/workbuddy2api-hub`。面板每日更新检查、手动检查与安装链接不再访问已停用的旧仓库；自建 fork 仍可通过 `WB_UPDATE_REPO=owner/repo` 覆盖。
