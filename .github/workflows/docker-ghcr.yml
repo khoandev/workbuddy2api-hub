@@ -1,0 +1,94 @@
+name: Build and push Docker image (GHCR)
+
+# Builds the image from the repository Dockerfile and pushes it to the personal
+# GHCR namespace on every push to master (main is listed too, because the
+# default branch here is main and both point at the same commit).
+#
+#   push master/main  ->  ghcr.io/<owner>/<repo>:latest
+#                         ghcr.io/<owner>/<repo>:sha-<short>
+#
+# The image name is derived from the event context, never hardcoded: a fork, a
+# rename or a transfer keeps pushing to its own namespace. Nothing else is
+# needed to authenticate - the built-in GITHUB_TOKEN can write packages in the
+# repository owner's namespace.
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# A newer push makes the previous build pointless: cancel it instead of paying
+# for two full multi-arch builds of the same branch.
+concurrency:
+  group: docker-ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve the image name from the repository
+        # owner/repo come from GITHUB_REPOSITORY, so the workflow never carries
+        # a hardcoded username or repository name. GHCR requires a lowercase
+        # path, while github.repository keeps the original casing, hence the
+        # ${var,,} expansion.
+        run: |
+          set -eu
+          image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE_NAME=${image}" >> "$GITHUB_ENV"
+          echo "Resolved image: ${image}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # `latest` only ever comes from a branch push, so a manual dispatch on
+          # a tag cannot move the floating tag backwards.
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' }}
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo ""
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
