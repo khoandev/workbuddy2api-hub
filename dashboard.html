@@ -2778,6 +2778,8 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '国际版每日签到': 'Daily check-in (Global)',
     '国内版每日签到': 'Daily check-in (China)',
     '国内版每日福利': 'Daily rewards (China)',
+    '国内版福利随机排程': 'Random schedule for China daily rewards',
+    '北京时间 08:00–10:00 随机执行，21:00 仅补领旅行奖励。自定义时段优先。': 'Runs between 08:00 and 10:00 Beijing time. At 21:00, only pending travel rewards are collected. Custom times take priority.',
     '国内版任务': 'China tasks',
     '一键完成一次性任务': 'Run all one-time tasks',
     '一键执行每日任务': 'Run all daily tasks',
@@ -4080,6 +4082,8 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     "一次性 / 活动福利": "一次性 / 活動福利",
     "国际版每日签到": "國際版每日簽到",
     "国内版每日福利": "國內版每日福利",
+    "国内版福利随机排程": "國內版福利隨機排程",
+    "北京时间 08:00–10:00 随机执行，21:00 仅补领旅行奖励。自定义时段优先。": "北京時間 08:00–10:00 隨機執行，21:00 僅補領旅行獎勵。自訂時段優先。",
     "一键完成一次性任务": "一鍵完成一次性任務",
     "一键执行每日任务": "一鍵執行每日任務",
     "全部错误码": "全部錯誤碼",
@@ -6629,6 +6633,11 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
           <button id="btnRunNightTask" onclick="triggerNightTask(this)">夜猫子任务</button>
         </div>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px">
+        <input type="checkbox" id="setCnRewardsRandom" onchange="saveCnRewardsRandom(this)">
+        <span>国内版福利随机排程</span>
+      </label>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:12px">北京时间 08:00–10:00 随机执行，21:00 仅补领旅行奖励。自定义时段优先。</div>
       <div class="cards" style="margin-bottom:0;grid-template-columns:repeat(auto-fit,minmax(185px,1fr))">
         <div class="card accent2" title="Buddy 加油站每日签到活动">
           <div class="k">Buddy 加油站签到</div>
@@ -10848,6 +10857,24 @@ async function saveDailyChatPreferFlash(input){
     toast('保存优先 Flash 设置失败: ' + e.message, 'bad');
   }finally{
     if(input) input.disabled = false;
+  }
+}
+
+async function saveCnRewardsRandom(input){
+  const enabled = input.checked;
+  input.disabled = true;
+  try{
+    const result = await postJSON('/settings/save', {cn_rewards_random_enabled: enabled});
+    input.checked = result.cn_rewards_random_enabled === true;
+    if(window.CURRENT_SETTINGS){
+      window.CURRENT_SETTINGS.cn_rewards_random_enabled = input.checked;
+    }
+    loadSchedulerStatus();
+  }catch(e){
+    input.checked = !enabled;
+    toast(e.message, 'bad');
+  }finally{
+    input.disabled = false;
   }
 }
 
@@ -17717,6 +17744,10 @@ async function loadSettings(showToast, opts){
       // ② 候选模型：有序，第一个是首选。
       const dailyChatPreferFlash = data.daily_chat_prefer_flash !== false;
       applyDailyChatPreferFlash(dailyChatPreferFlash);
+      const cnRewardsRandomInput = document.getElementById('setCnRewardsRandom');
+      if(cnRewardsRandomInput && !cnRewardsRandomInput.disabled){
+        cnRewardsRandomInput.checked = data.cn_rewards_random_enabled === true;
+      }
       renderDailyChatModelList(Array.isArray(data.daily_chat_models) ? data.daily_chat_models : []);
       // ③ 预算：单账号总预算、单轮上限、并发、建会话退避。
       const dailyChatBudgetDefault = Number(data.daily_chat_budget_default || 600);
