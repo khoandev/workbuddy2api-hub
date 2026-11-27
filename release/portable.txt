@@ -61,6 +61,7 @@ tools/wb-tls-bridge/licenses/x-crypto.txt
 tools/wb-tls-bridge/licenses/x-sys.txt
 
 wb_accounts.py
+wb_data_backup.py
 wb_activity.py
 wb_agents.py
 wb_atrest.py

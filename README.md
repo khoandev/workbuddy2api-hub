@@ -20,7 +20,7 @@
 This project is for protocol research and personal use only. Prefer the official client, do not use your primary account, and do not resell or share access.
 
 <p align="center">
-  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.5-2496ED?style=flat-square" alt="Version 2.2.5"></a>
+  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.7-2496ED?style=flat-square" alt="Version 2.2.7"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -166,6 +166,12 @@ CodeArts 的模型 ID 按上游目录**精确匹配**：`deepseek-v4.1-flash` �
 
 ---
 
+### 数据备份与恢复
+
+在「设置 → 系统与维护 → 数据备份与恢复」可下载全量 ZIP，包含账号、设置、完整用量流水（含归档段）和已配置的订阅桥数据。备份里的账号凭证与 API Key 应私下保管。
+
+导入 ZIP 后先校验，再点「安排恢复」。下一次重启网关时替换对应数据目录，恢复前的数据保留在各数据目录的 `.wb-data-backup/<备份 ID>/previous/`。如果备份里有面板密码，重启后使用备份中的密码登录。
+
 ## 二、账号接入与 API Key 权限
 
 ### 1. 账号添加与代理出口绑定
@@ -283,12 +289,11 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 ## 七、版本更新记录 (Changelog)
 
+本版更新请查看 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+
 ### Unreleased
 
-- **每 Key 累计积分额度（`credit_limit`，默认 0 = 不限）**：API Key 新增一个「这个 Key 一共能用多少积分」的上限，按 `usage.jsonl` 每行的 `credit` 折叠到 Key id，累计用满即拒绝派发（`403 permission_error`，chat / Responses / Anthropic Messages / 音频 / 生图 / 生视频同一口径），把上限调大立刻恢复。口径与 `daily_token_limit` 一致：判定放在并发槽位之前，不预判本次成本，因此正在处理的请求仍可能让积分超额；统计出错时放行而不是挡死。面板 Key 编辑弹窗新增「积分总额度」输入与「按剩余额度填」勾选（保存时换算成 `已用 + 剩余`），Key 卡片显示 `积分 已用 / 上限 · 剩 X`。行为默认关闭（0 = 不限），老安装不变；新增 `WB_KEY_CREDIT_TOTALS=0` 可整体关掉统计。
-- **Per-key cumulative credit quota (`credit_limit`, default 0 = unlimited)**: an API key can carry a total credit budget. `credit` from each `usage.jsonl` row is folded by key id; once the accumulated total reaches the cap the gateway refuses to dispatch (`403 permission_error`, same rule for chat, Responses, Anthropic Messages, audio, images and videos), and raising the cap restores service immediately. Same semantics as `daily_token_limit` — checked before the concurrency slot, no pre-estimate of the current request (in-flight requests may overshoot the cap), and a failure in the accounting code fails open. The panel gains a "total credit quota" input plus a "enter the remaining allowance" checkbox (converted to `used + remaining` on save) and a `credits used / cap · left` badge. Off by default (0 = unlimited), so existing installs are unaffected; `WB_KEY_CREDIT_TOTALS=0` disables the accounting entirely.
-
-本版更新请查看 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+- 传统布局的设置分类栏移到顶部，分组标题和说明随选择更新（#41）。
 
 ---
 

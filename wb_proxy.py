@@ -25,6 +25,7 @@ import hashlib
 import heapq
 import http.client
 import io
+import shutil
 import ipaddress
 from collections import OrderedDict, deque
 import re
@@ -102,6 +103,7 @@ import wb_updates
 import wb_update_request
 import wb_time
 import wb_external_api
+import wb_data_backup
 IS_WINDOWS = os.name == "nt"
 
 
@@ -8551,6 +8553,14 @@ def _new_analytics_stat():
         }
 
 
+_MODEL_CREDIT_SAMPLE_FIELDS = ("credit_sample_tokens", "credit_sample_credits",
+                               "credit_sample_requests")
+
+
+def _new_analytics_model_stat():
+    return {**_new_analytics_stat(), **dict.fromkeys(_MODEL_CREDIT_SAMPLE_FIELDS, 0)}
+
+
 # Rows the per-key table folds traffic into when no real key id applies.
 # `before` and `anon` are told apart by whether the row carries a `key` field
 # at all: rows written before this feature existed have none, and their number
@@ -8687,6 +8697,12 @@ def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
     _priced_note(priced, row, cost, pricing)
     cost_cny = cost["cny"] if cost["known"] else 0.0
     vals = _analytics_row_values(row)
+    # Zero also means "credit missing" in legacy rows. Pair tokens and credits
+    # only on completed text requests with an actual positive charge.
+    sample_tokens = 0
+    if (not is_err and (row.get("kind") or "chat") == "chat"
+            and vals[5] > 0 and math.isfinite(vals[5])):
+        sample_tokens = max(0, vals[4] or (vals[0] + vals[1]))
     acct_uid = row.get("account") or "(unattributed)"
     m_id = row.get("model") or "(unknown)"
     # A row written before this feature existed has no `key` field at all; a
@@ -8720,8 +8736,13 @@ def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
         model = tgt["models"].get(m_id)
         if model is None:
             model = tgt["models"][m_id] = {"model": m_id,
-                                           stat_key: _new_analytics_stat()}
-        _feed_analytics(model[stat_key], vals, is_err, cost_cny)
+                                           stat_key: _new_analytics_model_stat()}
+        model_stat = model[stat_key]
+        _feed_analytics(model_stat, vals, is_err, cost_cny)
+        if sample_tokens:
+            model_stat["credit_sample_tokens"] += sample_tokens
+            model_stat["credit_sample_credits"] += vals[5]
+            model_stat["credit_sample_requests"] += 1
 
         km = tgt["keys"].get(k_id)
         if km is None:
@@ -9166,7 +9187,7 @@ def _merge_analytics_halves(all_maps, win_maps):
         if shared:
             window_stat = dict(stat)
         elif win is None:
-            window_stat = _new_analytics_stat()
+            window_stat = _new_analytics_model_stat()
         else:
             window_stat = win["window"]
         model_map[m_id] = {"model": m_id, "window": window_stat,
@@ -9819,7 +9840,7 @@ def _add_analytics_window_maps(dst, src, half=_ANALYTICS_WINDOW):
         tgt = dst["models"].get(mid)
         if tgt is None:
             tgt = dst["models"][mid] = {"model": mid,
-                                        stat: _new_analytics_stat()}
+                                        stat: _new_analytics_model_stat()}
         _add_analytics_stat(tgt[stat], entry[stat])
     for kid, entry in src["keys"].items():
         tgt = dst["keys"].get(kid)
@@ -11729,6 +11750,11 @@ def _usage_cache_stat_ok(stat):
     return True
 
 
+def _usage_cache_model_stat_ok(stat):
+    return _usage_cache_stat_ok(stat) and all(
+        _usage_cache_number(stat.get(field)) for field in _MODEL_CREDIT_SAMPLE_FIELDS)
+
+
 def _usage_cache_models_ok(models):
     """analytics 的 {model: {requests, tokens, reasoning, cost_cny}} 表。"""
     if not isinstance(models, dict):
@@ -11771,7 +11797,7 @@ def _usage_cache_analytics_window_ok(maps):
             return False
         if not isinstance(entry.get("model"), str):
             return False
-        if not _usage_cache_stat_ok(entry.get("window")):
+        if not _usage_cache_model_stat_ok(entry.get("window")):
             return False
     for kid, entry in keys.items():
         if not isinstance(kid, str) or not isinstance(entry, dict):
@@ -11860,7 +11886,7 @@ def _usage_cache_analytics_ok(maps):
             return False
         if not isinstance(entry.get("model"), str):
             return False
-        if not _usage_cache_stat_ok(entry.get("all_time")):
+        if not _usage_cache_model_stat_ok(entry.get("all_time")):
             return False
     for kid, entry in keys.items():
         if not isinstance(kid, str) or not isinstance(entry, dict):
@@ -13045,7 +13071,7 @@ def runtime_settings_view():
         "accounts_dir": ACCOUNTS_DIR,
         "usage_dir": USAGE_DIR,
         "settings_file": wb_settings.settings_path(ACCOUNTS_DIR),
-        "version": "2.2.5",
+        "version": "2.2.7",
     }
 def current_account():
     """Account used for display purposes (health / usage summaries)."""
@@ -23125,7 +23151,7 @@ class Handler(BaseHTTPRequestHandler):
             super().finish()
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             pass
-    server_version = "wb-proxy/2.2.5"
+    server_version = "wb-proxy/2.2.7"
     def log_message(self, fmt, *args):
         # 静默过滤前端看板高频定时心跳的正常 200 GET 请求（/logs、/usage、/accounts 轮询等）
         # 避免自增死循环刷屏与日志污染。遇 4xx/5xx 异常或所有非 GET 业务操作依然如实记录。
@@ -23576,6 +23602,61 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def _data_backup(self, action):
+        if not self._panel_ok():
+            self.close_connection = True
+            return self._error(401, "panel password required", "invalid_request_error")
+        data = wb_data_backup.roots(ACCOUNTS_DIR, USAGE_DIR)
+        if action == "export":
+            try:
+                with wb_data_backup.export_file(data) as archive:
+                    wb_data_backup.write_zip(data, archive)
+                    size = archive.tell()
+                    archive.seek(0)
+                    name = "workbuddy-data-" + wb_time.strftime("%Y%m%d-%H%M%S") + ".zip"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    try:
+                        shutil.copyfileobj(archive, self.wfile, wb_data_backup.CHUNK)
+                    except OSError:
+                        self.close_connection = True
+            except wb_data_backup.BackupError as exc:
+                return self._error(400, str(exc), "invalid_request_error")
+            except Exception as exc:
+                log("data backup export failed: %s" % type(exc).__name__, level="WARN")
+                return self._error(500, "Could not create the backup.", "server_error")
+            return
+        try:
+            if action == "status":
+                result = wb_data_backup.status(data)
+            elif action == "import":
+                try:
+                    size = int(self.headers.get("Content-Length") or "0")
+                except ValueError:
+                    size = 0
+                if self.headers.get("Transfer-Encoding") or not 0 < size <= wb_data_backup.MAX_BYTES:
+                    self.close_connection = True
+                    return self._error(413, "Backup upload size is out of range.", "invalid_request_error")
+                self._handle_expect_continue()
+                result = wb_data_backup.stage(data, self.rfile, size)
+            else:
+                payload = self._payload_or_error()
+                if payload is None:
+                    return
+                result = wb_data_backup.choose(data, payload.get("id"), action == "confirm")
+        except wb_data_backup.BackupError as exc:
+            self.close_connection = True
+            return self._error(400, str(exc), "invalid_request_error")
+        except Exception as exc:
+            self.close_connection = True
+            log("data backup operation failed: %s" % type(exc).__name__, level="WARN")
+            return self._error(500, "The backup operation could not be completed.", "server_error")
+        return self._json_panel(200, result)
     def _supplied_key(self):
         """The key the caller presented.
 
@@ -24004,6 +24085,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_pricing()
         if path == "/settings":
             return self._get_settings()
+        if path == "/settings/data-backup":
+            return self._data_backup("status")
+        if path == "/settings/data-backup/export":
+            return self._data_backup("export")
         if path == "/updates":
             return self._get_updates()
         if path == "/updates/backups":
@@ -25292,23 +25377,27 @@ class Handler(BaseHTTPRequestHandler):
             b'data-ui-language="__WB_UI_LANGUAGE__"',
             ('data-ui-language="%s"' % language).encode("utf-8"),
         )
+        # Snapshot the persisted exit for the first paint and for the ETag.
+        # The view selector follows its own state, including ?view= overrides.
+        realm = CURRENT_REALM
+        realm_label = {"codearts": "CodeArts", "cn": "国内版"}.get(realm)
+        if realm_label:
+            body = body.replace(b'data-gateway-realm="intl"',
+                                ('data-gateway-realm="%s"' % realm).encode("ascii"), 1)
+            body = body.replace(
+                '<span id="headerRealmName">国际版</span>'.encode("utf-8"),
+                ('<span id="headerRealmName">%s</span>' % realm_label).encode("utf-8"), 1)
         # 面板首页是纯静态资源（服务端逐字节原样发出、不含任何机密），所以可以
         # 允许浏览器存储副本、每次打开再回源校验：校验命中回 304（无 body），
         # 省下整页（约 470KB）的重复下载，手机 / Tailscale 远程访问体感最明显。
         #
-        # 校验符必须覆盖**所有**影响响应体的输入，不只是文件本身：body 还取决于
-        # 上面注入的 ui_language——用户改一次界面语言，文件没动、body 却变了；
-        # 若 tag 只看文件，客户端带旧 tag 回来会拿到 304 + 旧语言的页面。所以 tag
-        # 由 (文件 mtime_ns, size, language) 三者派生：前两个代表文件字节（本文件
-        # 只在应用更新时被整体替换、从不原地修改），第三个就是本次实际注入的值，
-        # 三者组合变化 ⇔ 响应字节变化。mtime 用纳秒精度，同一秒内的两次替换也能
-        # 得到不同 tag。
+        # 文件、面板语言或默认出口任一变化时，浏览器都要重新读取首页。
         etag = None
         try:
             st = os.stat(DASHBOARD_HTML)
-            # 强校验符（不带 W/ 前缀）：响应是「文件字节 + 本次语言」的精确副本，
+            # 强校验符（不带 W/ 前缀）：覆盖文件字节与本次注入值，
             # tag 变 ⇔ 字节变。
-            etag = '"%x-%x-%s"' % (st.st_mtime_ns, st.st_size, language)
+            etag = '"%x-%x-%s-%s"' % (st.st_mtime_ns, st.st_size, language, realm)
         except Exception:
             # stat 取不到（或时间戳无法表示）不是致命错误：退化为一律按普通
             # 200 处理，只是这一次没有条件请求支持，绝不让面板页本身打不开。
@@ -29980,6 +30069,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._apply_pinned_route():
             return
         path = self.path.split("?")[0]
+        if path in ("/settings/data-backup/import", "/settings/data-backup/confirm",
+                    "/settings/data-backup/cancel"):
+            return self._data_backup(path.rsplit("/", 1)[1])
         if path == "/v1/accounts/authorize":
             started = time.time()
             if not self._external_authorized("account:auth"):
@@ -31112,6 +31204,11 @@ def _bootstrap_runtime(args):
     SYSTEM_PROMPT = args.system_prompt
     if args.accounts_dir:
         ACCOUNTS_DIR = os.path.abspath(args.accounts_dir)
+    restore_phase = wb_data_backup.apply_pending(wb_data_backup.roots(ACCOUNTS_DIR, USAGE_DIR))
+    if restore_phase == "restored":
+        log("data backup restore applied", tag="settings")
+    elif restore_phase == "failed":
+        log("data backup restore failed; original data retained", level="WARN", tag="settings")
     # 日志落库（默认关闭）：在账号池之前初始化，好让「池加载失败」这类最需要
     # 事后留档的启动日志也能进库。关闭时这里只造一个 enabled=False 的空壳，
     # 不建文件、不改日志路径。
