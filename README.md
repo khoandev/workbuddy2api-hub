@@ -20,7 +20,7 @@
 This project is for protocol research and personal use only. Prefer the official client, do not use your primary account, and do not resell or share access.
 
 <p align="center">
-  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.7-2496ED?style=flat-square" alt="Version 2.2.7"></a>
+  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.9-2496ED?style=flat-square" alt="Version 2.2.9"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -262,6 +262,9 @@ Claude 桌面版的「第三方推理」只接受 `claude-*` 形式的模型 ID�
 | 生视频 | `POST` | `/v1/videos` | 异步生视频任务提交（本地并发排队与空闲调度） |
 | 视频状态 | `GET` | `/v1/videos/<id>` | 轮询视频生成进度与结果 |
 | 产物下载 | `GET` | `/v1/videos/<id>/content` | 下载视频 MP4 产物直链 |
+| 图片去水印 | `POST` | `/v1/images/strip-watermark` | 裁掉画面底部的水印留白（本地后处理，不扣积分；需在设置中启用） |
+| 文本嵌入 | `POST` | `/v1/embeddings` | OpenAI 兼容向量接口，上游模型 `bge-m3`（需在设置中启用） |
+| MCP 服务 | `POST` | `/mcp` | MCP 2025-06-18 无状态 JSON-RPC，把生图 / 生视频 / 去水印包成工具 |
 | 健康检查 | `GET` | `/health` | 网关运行状态、可用账号数与就绪模型分布 |
 | 创建账号授权请求 | `POST` | `/v1/accounts/authorize` | 按 `realm=cn` 或 `intl` 生成一次性浏览器授权链接 |
 | 查询授权状态 | `GET` | `/v1/accounts/authorize/<request_id>` | 查询浏览器登录结果；成功后账号自动写入账号列表 |
@@ -276,7 +279,7 @@ python tests/run_all.py            # 全部套件
 python tests/run_all.py realm      # 只跑名字里含 realm 的
 ```
 
-- 319 个套件：241 个 Python + 78 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
+- 324 个套件：245 个 Python + 79 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - `tests/_mobile_check.py` 是独立的 Playwright 手机/桌面布局检查器（需自行安装 Playwright），按需手动运行，不在上面的套件集里。
 - `tests/_visual_recent.py` 是同一类手动检查器：用合成 fixture 起一份 1480 宽的「请求列表」，验证失败徽章点开的详情弹窗、四个过滤下拉真的把参数发到 `/usage/recent`，并把列表 / 弹窗 / 筛选条截图写到系统临时目录的 `wb-visual-recent/`。
 - CI（`.github/workflows/tests.yml`）跑同一条命令：Ubuntu 上 python 3.9 与 3.12（3.9 是本项目声称的最低版本），Windows 上 python 3.12；推送 `v*` tag 时额外断言 **tag == 源码版本**（`-ci` 演练 tag 豁免）。
@@ -285,11 +288,7 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 ## 七、版本更新记录 (Changelog)
 
-本版更新请查看 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
-
-### Unreleased
-
-- 传统布局的设置分类栏移到顶部，分组标题和说明随选择更新（#41）。
+本版更新与完整历史版本请查阅 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
 ---
 
